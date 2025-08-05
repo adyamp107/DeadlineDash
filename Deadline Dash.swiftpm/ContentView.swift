@@ -1,6 +1,14 @@
 import SwiftUI
+import UIKit
+import AVFoundation
+
+class GameViewModel: ObservableObject {
+    @Published var direction: ContentView.Direction = .none
+}
 
 struct ContentView: View {
+    @ObservedObject var viewModel: GameViewModel
+
     enum Direction {
         case up, down, left, right, none
     }
@@ -40,6 +48,8 @@ struct ContentView: View {
         "Game Over! You're like a slow loading page, but at least you load... eventually 📶",
         "Game Over! Could be worse — you could have stayed in bed all day 🛏️"
     ]
+    
+    @State private var audioPlayer: AVAudioPlayer?
     
     @State private var gameStarted = false
     @State private var openGame = true
@@ -103,21 +113,23 @@ struct ContentView: View {
             }
             .frame(width: CGFloat(gridSize) * cellSize, height: CGFloat(gridSize) * cellSize)
             
+            
             Text("Complete all tasks before the deadline!!!")
+            Text("You can use arrow keys or aswd on keyboard!")
             
             if(gameStarted) {
                 HStack {
                     Button("⬅️") {
-                        direction = .left
+                        viewModel.direction = .left
                     }
                     Button("⬆️") {
-                        direction = .up
+                        viewModel.direction = .up
                     }
                     Button("⬇️") {
-                        direction = .down
+                        viewModel.direction = .down
                     }
                     Button("➡️") {
-                        direction = .right
+                        viewModel.direction = .right
                     }
                 }
                 .font(.largeTitle)
@@ -147,6 +159,7 @@ struct ContentView: View {
             }
         }
         .onAppear() {
+            playBackgroundMusic()
             resetGame()
         }
         .onReceive(timer) { _ in
@@ -155,6 +168,28 @@ struct ContentView: View {
                             moveEnemy()
                             checkFoodEaten()
             }
+        }
+    }
+    
+    func playBackgroundMusic() {
+        
+        if ProcessInfo.processInfo.environment["PREVIEWS_RUNNING_HOSTED_FOR_CATALYST"] == "1" {
+            return
+        }
+        
+        guard let url = Bundle.main.url(forResource: "Tetris", withExtension: "mp3") else {
+            print("Song not found")
+            return
+        }
+        
+        do {
+            audioPlayer = try AVAudioPlayer(contentsOf: url)
+            audioPlayer?.numberOfLoops = -1
+            audioPlayer?.volume = 0.5
+            audioPlayer?.prepareToPlay()
+            audioPlayer?.play()
+        } catch {
+            print("Failed to play audio: \(error.localizedDescription)")
         }
     }
     
@@ -243,7 +278,7 @@ struct ContentView: View {
     func movePacman() {
         var newPos = pacmanPosition
         
-        switch direction {
+        switch viewModel.direction {
         case .up:
             newPos.y -= 1
         case .down:
@@ -256,23 +291,36 @@ struct ContentView: View {
             return
         }
         
+        var isWrapAround = false
+        
         if newPos.x < 0 {
             newPos.x = CGFloat(gridSize - 1)
+            isWrapAround = true
         } else if newPos.x >= CGFloat(gridSize) {
             newPos.x = 0
+            isWrapAround = true
         }
         
         if newPos.y < 0 {
             newPos.y = CGFloat(gridSize - 1)
+            isWrapAround = true
         } else if newPos.y >= CGFloat(gridSize) {
             newPos.y = 0
+            isWrapAround = true
         }
         
         if wallPositions.contains(newPos) {
             return
         }
         
-        pacmanPosition = newPos
+        
+        if isWrapAround {
+            pacmanPosition = newPos
+        } else {
+            withAnimation(.linear(duration: 0.18)) {
+                pacmanPosition = newPos
+            }
+        }
     }
     
     func moveEnemy() {
@@ -317,8 +365,10 @@ struct ContentView: View {
             }
         }
         
-        enemyPosition = newPos
-        
+        withAnimation(.linear(duration: 0.18)) {
+            enemyPosition = newPos
+        }
+                
         if enemyPosition == pacmanPosition {
             gameOver()
         }
@@ -352,8 +402,56 @@ struct ContentView: View {
     }
 }
 
-struct ContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        ContentView()
+class HostingController<Content>: UIHostingController<Content> where Content: View {
+    var gameViewModel: GameViewModel?
+    
+    override var canBecomeFirstResponder: Bool { true }
+    
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        becomeFirstResponder()
     }
+    
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        super.pressesBegan(presses, with: event)
+        
+        for press in presses {
+            guard let key = press.key else { continue }
+            print("Key down: \(key.charactersIgnoringModifiers) keyCode: \(key.keyCode.rawValue)")
+            
+            switch key.keyCode.rawValue {
+            case 80:
+                gameViewModel?.direction = .left
+            case 82:
+                gameViewModel?.direction = .up
+            case 81:
+                gameViewModel?.direction = .down
+            case 79:
+                gameViewModel?.direction = .right
+                
+            case 4:
+                gameViewModel?.direction = .left
+            case 26:
+                gameViewModel?.direction = .up
+            case 22:
+                gameViewModel?.direction = .down
+            case 7:
+                gameViewModel?.direction = .right
+            default:
+                break
+            }
+        }
+    }
+}
+
+struct HostingControllerWrapper: UIViewControllerRepresentable {
+    let gameViewModel: GameViewModel
+    
+    func makeUIViewController(context: Context) -> UIViewController {
+        let controller = HostingController(rootView: ContentView(viewModel: gameViewModel))
+        controller.gameViewModel = gameViewModel
+        return controller
+    }
+    
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
 }
